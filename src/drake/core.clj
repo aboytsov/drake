@@ -245,28 +245,30 @@
 (defn steps-report
   "Returns a report of steps-to-run suitable for cli printing."
   [parse-tree steps-to-run]
-  (str "The following steps will be run, in order:\n"
-       (join "\n"
-             (for [[i {:keys [index cause]}]
-                   (keep-indexed vector steps-to-run)]
-               ;; TODO(artem)
-               ;; Optimize for repeated BASE prefixes (we can't just show it
-               ;; without base, since it can be ambiguous)
-               ;; also in (step-string), (step-dirnname)
-               ;;
-               ;; If the cause is "projected timestamped", meaning that we will
-               ;; also run one or more targets this one depends on, we will
-               ;; assume they all will generate data in the branch and add
-               ;; branch suffix to all inputs, otherwise behave as the data
-               ;; dictates
-               (format "  %d: %s [%s]"
-                       (inc i)
-                       (step-string (branch-adjust-step
-                                     ((parse-tree :steps) index)
-                                     (contains? #{"projected timestamped"
-                                                  "forced"}
-                                                cause)))
-                       cause)))))
+  (if (empty? steps-to-run)
+    "Nothing to do."
+    (str "The following steps will be run, in order:\n"
+         (join "\n"
+               (for [[i {:keys [index cause]}]
+                     (keep-indexed vector steps-to-run)]
+                 ;; TODO(artem)
+                 ;; Optimize for repeated BASE prefixes (we can't just show it
+                 ;; without base, since it can be ambiguous)
+                 ;; also in (step-string), (step-dirnname)
+                 ;;
+                 ;; If the cause is "projected timestamped", meaning that we will
+                 ;; also run one or more targets this one depends on, we will
+                 ;; assume they all will generate data in the branch and add
+                 ;; branch suffix to all inputs, otherwise behave as the data
+                 ;; dictates
+                 (format "  %d: %s [%s]"
+                         (inc i)
+                         (step-string (branch-adjust-step
+                                       ((parse-tree :steps) index)
+                                       (contains? #{"projected timestamped"
+                                                    "forced"}
+                                                  cause)))
+                         cause))))))
 
 ;; TODO(artem):
 ;; Let's also write how many, something like
@@ -338,17 +340,16 @@
             (info "Step Duration Secs:" (duration-secs start (java.util.Date.))))))
       should-build)))
 
-(defn- run-steps [parse-tree steps]
-  "Runs steps in order given as an array of their indexes"
-  (if (empty? steps)
-    (info "Nothing to do.")
-    (do
-      (info (format "Running %d steps..." (count steps)))
+(defn- run-steps! [parse-tree steps]
+  "Runs steps in order given as an array of their indexes.
+   Does nothing if steps is empty."
+  (when-not (empty? steps)
+   (info (format "Running %d steps..." (count steps)))
       (let [steps-run (reduce (fn [x [i step]]
                                 (inc-if (run-step parse-tree i step) x))
                               0 (keep-indexed vector steps))]
         (info "")
-        (info (format "Done (%d steps run)." steps-run))))))
+        (info (format "Done (%d steps run)." steps-run)))))
 
 (defn print-steps
   "Prints inputs and outputs of steps to run."
@@ -364,7 +365,7 @@
                 (dorun (map #(println (str prefix \tab %)) (step key))))))
           (map (:steps parse-tree) (map :index steps-to-run)))))
 
-(defn run
+(defn run!
   "Runs d with the specified parse-tree and an array of target
    selection expressions."
   [parse-tree targets]
@@ -379,11 +380,11 @@
     (debug "-------------------")
     (let [steps-to-run (predict-steps parse-tree target-steps)]
       (cond
-        (empty? steps-to-run) (info "Nothing to do.")
+        (empty? steps-to-run) (println "Nothing to do.")
         (:print *options*)    (print-steps parse-tree steps-to-run)
         (:preview *options*)  (println (steps-report parse-tree steps-to-run))
         :else (if (confirm-run parse-tree steps-to-run)
-                (run-steps parse-tree steps-to-run))))))
+                (run-steps! parse-tree steps-to-run))))))
 
 (defn- running-under-nailgun?
   "Returns truthy if and only if this JVM process is running under a
@@ -637,7 +638,7 @@
              (cli-fail-with-message
                "--merge-branch and --branch can't be used at the same time")
              (with-workflow-file #(merge-branch % targets)))
-           (with-workflow-file #(run % targets)))
+           (with-workflow-file #(run! % targets)))
          (shutdown 0)
          (catch map? m
            (show-err m)
@@ -653,4 +654,4 @@
   [wf]
   (set-options {:workflow wf
                 :auto true})
-  (with-workflow-file #(run % ["=..."])))
+  (with-workflow-file #(run! % ["=..."])))
